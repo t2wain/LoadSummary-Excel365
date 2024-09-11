@@ -1,0 +1,97 @@
+fxToKw: Converting to kW
+========================
+
+value: size [number]
+unit: unit of value - hp, kW, kVA [text]
+pf: power factor [optional number]
+return: [number]
+
+fxToKw = LAMBDA(value,unit,[pf],SWITCH(unit,"kW",value,"hp",value * 0.73549875,"kVA",value*pf,0))
+
+
+fxDF: Calculate Demand Factor
+=============================
+
+rval: load rating [number]
+runit: unit of rval - hp, kW, kVA [text]
+bval: brake load [number]
+bunit: unit of bval - hp, kW, kVA [text]
+pf: power factor [optional number]
+return: [number]
+
+fxDF = LAMBDA(rval,runit,bval,bunit,[pf],fxToKw(bval,bunit,pf)/fxToKw(rval,runit,pf))
+
+
+fxGetChildren: Get load buses of a source buses
+=============================================== 
+
+n: source bus [text]
+arr: a range that includes bus column and source bus column [range]
+nc: column index of the bus column [number]
+pc: column index of the source bus column [number]
+return: [array]
+
+fxGetChildren=LAMBDA(n,arr,nc,pc,FILTER(fxGetCols(arr,nc),fxGetCols(arr,pc)=n,""))
+
+
+fxGetCols: A utility function to return some columns of a range
+===============================================================
+
+arr: [range]
+cols: column indexes [number] or [array constant] 
+return: [array]
+
+fxGetCols=LAMBDA(arr,cols,INDEX(arr,SEQUENCE(ROWS(arr)),cols))
+
+
+fxGetVal: A utility function to look up a value
+===============================================
+
+n: lookup value [text]
+arr: [range]
+nc: lookup column index within the range [number]
+vc: value column index withing the range [number]
+return: found value or 0 if not found
+
+fxGetVal=LAMBDA(n,arr,nc,vc,FILTER(fxGetCols(arr,vc),fxGetCols(arr,nc)=n,0))
+
+
+fxGetRollUp: Get all the parent buses (parent of parent bus) for a given bus
+============================================================================
+
+n: load bus [text]
+arr: a range includes bus and source bus [range]
+nc: column index of load bus [number]
+pc: column index of source bus [number]
+return: concatenate source (parent) buses [text]
+
+fxGetRollUp=LAMBDA(n,arr,nc,pc,[acc],[stat],
+   LET(nn, fxGetVal(n,arr,nc,pc),
+       nacc, acc+1,
+	   nstat, TEXTJOIN("|",,stat,IF(nn=0,"",nn)),
+       IF(OR(acc>20,nn=0), 
+	      IF(nstat="",nstat,TEXTJOIN("",,"|",nstat,"|")),
+		  fxGetRollUp(nn,arr,nc,pc,nacc,nstat)))
+)
+
+
+fxSumRollUp: Get a total of all the rollup load for a given source bus
+======================================================================
+
+n: lookup bus [text]
+arr: a range includes bus, connected load, rollup buses [range]
+nc: column index of lookup bus [number]
+vc: column index of connected load [number]
+rc: column index of rollup buses [number]
+return: total rollup load [number]
+
+	   
+fxSumRollUp=LAMBDA(n,arr,nc,vc,rc,
+   LET(varr, fxGetCols(arr,vc),
+       rarr, fxGetCols(arr,rc),
+	   tn, TEXTJOIN("",, "|", n, "|"),
+	   tarr, IFERROR(FIND(n,rarr)>0, FALSE),
+       bld, FILTER(varr, tarr, 0),
+       SUM(bld)
+	)
+)
