@@ -25,3 +25,15 @@ Main language constructs:
 Electrical Load Summary is an engineering worksheet to calculate the total electrical load of an electrical system. Electrical loads are powered by buses and buses are powered by other buses (parent buses). The objective is to calculate the connected loads of each bus and the rollup loads from other buses that it powers.
 
 The objective of this exercise is to use the new features of Excel 365 to perform the calculation with custom LAMBDA functions and to avoid VBA. File [LoadSum_LAMBDA.txt](./LoadSum_LAMBDA.txt) list the custom LAMBDA functions used in this worksheet.
+
+**Load List Worksheet** - Provide data entry for all the loads
+
+![Load List Worksheet](./LoadListSheet.png)
+
+**Buses Worksheet** - Perform summation of connected loads for each bus.
+
+![Load List Worksheet](./BusesSheet.png)
+
+**Load Summary Rollup** - Perform testing of rollup calculation
+
+![Load Summary Rollup](./BusRollUpTestSheet.png)
