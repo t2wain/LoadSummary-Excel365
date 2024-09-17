@@ -34,6 +34,6 @@ The objective of this exercise is to use the new features of Excel 365 to perfor
 
 ![Load List Worksheet](./BusesSheet.png)
 
-**Load Summary Rollup** - Perform testing of rollup calculation
+**Notes Worksheet** - General notes about worksheets.
 
-![Load Summary Rollup](./BusRollUpTestSheet.png)
+![Notes Worksheet](./GeneralNotes.png)
