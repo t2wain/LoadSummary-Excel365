@@ -1,0 +1,416 @@
+// --- Electrical Load Summary Module ---
+
+// Data from SPEL:
+// - VW_LOAD_LIST
+
+/* ========================================================= */
+
+// Convert load to KW
+// size: load size, ex. 40 hp
+// pf: power factor, ex. 0.8
+// unit: load unit, ex. kW, W, hp, kVAR, VAR, kVA, VA
+// if size is a number, then expecting a unit argument
+// pf is default to 1.0
+fxToKW=LAMBDA(size /*txt|num*/, [pf] /*num*/, [unit] /*txt*/,
+    LET(
+        _size1, IF(OR(ISOMITTED(unit), ISBLANK(unit)), TEXTBEFORE(size, " "), size),
+        _unit1, IF(OR(ISOMITTED(unit), ISBLANK(unit)), TEXTAFTER(size, " "), unit),
+        _pf1, IF(OR(ISOMITTED(pf),ISBLANK(pf)),1.0,pf),
+        _res, SWITCH(_unit1,
+            "kW",_size1,
+            "W",_size1/1000.0,
+            "hp",_size1*0.7457,
+            "kVAR",0,
+            "VAR",0,
+            "kVA",_size1*_pf1,
+            "VA",_size1/1000.0*_pf1,
+            ERROR.TYPE(3)
+        ),
+        _res
+    )
+);
+
+/* ========================================================= */
+
+// Convert load to kVA
+// size: load size, ex. 40 hp
+// pf: power factor, ex. 0.8
+// unit: load unit, ex. kW, W, hp, kVAR, VAR, kVA, VA
+// if size is a number, then expecting a unit argument
+fxToKVA=LAMBDA(size /*txt|num*/, pf /*num*/, [unit] /*txt*/,
+    LET(
+        _size1, IF(OR(ISOMITTED(unit), ISBLANK(unit)), TEXTBEFORE(size, " "), size),
+        _unit1, IF(OR(ISOMITTED(unit), ISBLANK(unit)), TEXTAFTER(size, " "), unit),
+        _res, SWITCH(_unit1,
+            "kVA",_size1,
+            "VA",_size1/1000,
+            "kVAR",_size1,
+            "VAR",_size1/1000,
+            "hp",_size1*0.7457/pf,
+            "W",_size1/1000/pf,
+            "kW",_size1/pf,
+            ERROR.TYPE(3)
+        ),
+        _res
+    )
+);
+
+/* ========================================================= */
+
+// Convert voltage to Volt
+// voltage: voltage
+// unit: voltage unit, ex. V, kV
+// if voltage is a number, then expecting a unit argument
+fxToVolt=LAMBDA(voltage /*txt|num*/, [unit] /*txt*/,
+    LET(
+        _size1, IF(OR(ISOMITTED(unit), ISBLANK(unit)), TEXTBEFORE(voltage, " "), voltage),
+        _unit1, IF(OR(ISOMITTED(unit), ISBLANK(unit)), TEXTAFTER(voltage, " "), unit),
+        _res, SWITCH(_unit1,
+            "V",_size1,
+            "kV",_size1*1000,
+            ERROR.TYPE(3)
+        ),
+        IFERROR(_res,0)
+    )
+);
+
+/* ========================================================= */
+
+fxCalcPF=LAMBDA(kW, kVA, IFERROR(kW / kVA, 1));
+
+/* ========================================================= */
+
+fxCalcAmp=LAMBDA(voltage, kVA, IFERROR(kVA * 1000 / (SQRT(3) * voltage), 0));
+
+/* ========================================================= */
+
+// Calculate usage kVA
+// size: load size, ex. 40 hp
+// pf: power factor, ex. 0.8
+// eff: efficient factor, ex. 0.9
+// unit: load unit, ex. kW, W, hp, kVAR, VAR, kVA, VA
+// if size is a number, then expecting a unit argument
+fxRatedKVA=LAMBDA(size /*txt|num*/, pf /*num*/, eff /*num*/, [unit] /*txt*/,
+    fxToKVA(size,pf,unit) / eff
+);
+
+/* ========================================================= */
+
+// Calculate operating kVAR
+// kva: load kVA
+// pf: power factor, ex. 0.8
+// dmfact: demand factor, ex. 0.9
+// coinf: coincident factor, ex. 1.0
+fxOperKVAR=LAMBDA(kva /*num*/, pf /*num*/, dmfact /*num*/, coinf /*num*/,
+    kva * dmfact * SQRT(1 - (pf)^2) * coinf
+);
+
+/* ========================================================= */
+
+// Calculate operating kW
+// kva: load kVA
+// pf: power factor, ex. 0.8
+// dmfact: demand factor, ex. 0.9
+// coinf: coincident factor, ex. 1.0
+fxOperKW=LAMBDA(kva /*num*/, pf /*num*/, dmfact /*num*/, coinf /*num*/,
+    kva * dmfact * pf * coinf
+);
+
+/* ========================================================= */
+
+// Get coincident factor based on operating mode
+// mode: operating mode,
+// contf: continuous coincident factor
+// interf: intermittent coincident factor
+// sparef: spare coincident factor
+// stndf: stand-by coincident factor
+fxCoinFact=LAMBDA(mode,contf,interf,sparef,standf,
+    SWITCH(mode,
+        "C", contf,
+        "Continuous",contf,
+        "I",interf,
+        "Intermittent",interf,
+        "S",sparef,
+        "Spare",sparef,
+        "SB",standf,
+        "StandBy",standf,
+        ERROR.TYPE(3)
+    )
+);
+
+/* ========================================================= */
+
+// Calculate KVA
+fxCalcKVA=LAMBDA(kw /*num*/, kvar /*num*/,
+    IMABS(COMPLEX(kw,kvar))
+);
+
+/* ========================================================= */
+
+// Get a sorted unique item from list "eqtags".
+// If there is blank tag then give it a name "nosrcname"
+// eqtags: a list of tags including blanks
+// nosrcname: a name substitute for blank tags
+fxUniqueTags=LAMBDA(eqtags /*list*/, nosrcname /*txt*/,
+    SORT(UNIQUE(IF(ISBLANK(eqtags),nosrcname,eqtags),FALSE,FALSE))
+);
+
+/* ========================================================= */
+
+// Return :arrvals where :tag matches :tags.
+// If there is blank tag in :tags, then match :tag by :notag.
+fxFilterData=LAMBDA(tag /*txt*/, arrvals /*array*/, tags /*list*/, notag /*txt*/,
+    FILTER(
+        arrvals,
+        (tags = tag) + (ISBLANK(tags) * (tag = notag))
+    )
+);
+
+/* ========================================================= */
+
+// Count the rows returned from fxFilterData
+fxFilterCount=LAMBDA(tag /*txt*/, arrvals /*array*/, tags /*list*/, notag /*txt*/,
+    IFERROR(ROWS(fxFilterData(tag,arrvals,tags,notag)),0)
+);
+
+/* ========================================================= */
+
+// Sum :arrvals returned from fxFilterData
+fxFilterSum=LAMBDA(tag /*txt*/, arrvals /*array*/, tags /*list*/, notag /*txt*/,
+    LET(
+        loads, fxFilterData(tag,arrvals,tags,notag),
+        total, SUM(IF(ISERROR(loads),0,loads)),
+        total
+    )
+);
+
+/* ========================================================= */
+
+// Filter :rngvals based on column number :colno for non-blank value.
+// rngvals - an array or Excel range
+// colno - column number in :rngvals to check for non-blank.
+// skiptop - skip the number of top rows
+fxNonBlankData=LAMBDA(rngvals /*array*/, colno /*num*/, skiptop /*num*/,
+    LET(
+        _vals, CHOOSECOLS(rngvals, colno),
+        _arr, FILTER(rngvals, NOT(ISBLANK(_vals))),
+        res, CHOOSEROWS(_arr, SEQUENCE(ROWS(_arr)-skiptop)+skiptop),
+        res
+    )
+);
+
+/* ========================================================= */
+
+// Return sorted unique rows in :rngvals
+// rngvals: array of values
+// sortcolno: column number in :rngvals to sort by
+fxUniqueRows=LAMBDA(rngvals /*array*/, sortcolno /*num*/,
+    SORT(UNIQUE(rngvals,FALSE,FALSE),sortcolno)
+);
+
+/* ========================================================= */
+
+// Get source equipment using table VW_BUS_CONN.
+// There might be more than one source equipment (parallel circuits).
+// If the first matched source equipment is a "disconnected" circuit,
+// then check if there is another parallel "connected" circuit instead.
+// eqid: equipment GUID
+// connect: table VW_BUS_CONN
+fxGetSrcEq=LAMBDA(eqid /*txt*/, connect /*array*/,
+    LET(
+        _join2id, CHOOSECOLS(connect, 6),
+        _ckmode1, CHOOSECOLS(connect, 5),
+        _src, XLOOKUP(
+            eqid,
+            _join2id,
+            CHOOSECOLS(connect, {1, 2, 3, 4, 5}),
+            {"", "", "", "", ""}
+        ),
+        _checkinc, IF(INDEX(_src, 1, 5) = "Disconnected", TRUE, FALSE),
+        _ckts, FILTER(
+            CHOOSECOLS(connect, {1, 2, 3, 4, 5}),
+            ((_join2id = eqid) * (_ckmode1 = "Connected")),
+            {"", "", "", "", ""}
+        ),
+        _ckt, CHOOSEROWS(_ckts, 1),
+        _srceq, IF(_checkinc, _ckt, _src),
+        _res, IF(INDEX(_srceq, 1, 1) = "", _src, _srceq),
+        _res
+    )
+);
+
+/* ========================================================= */
+
+// Loop recursively through the :connect to find the next source bus.
+// eqid: equipment GUID from column JOIN2ID
+// connect: table VW_BUS_CONN
+fxSrcBus=LAMBDA(eqid /*txt*/, connect /*array*/, [lvl], [path],
+    LET(
+        _src, fxGetSrcEq(eqid,connect),
+        _srcid, INDEX(_src, 1, 1),
+        _srctag, INDEX(_src, 1, 2),
+        _srctype, INDEX(_src, 1, 3),
+        _nxtlvl, IF(ISOMITTED(lvl), 1, lvl + 1),
+        _stop, IF(OR(_nxtlvl > 20, _srcid = "", _srctype = "Bus"), TRUE, FALSE),
+        _dupid, IF(_nxtlvl > 1, IFERROR(ROWS(FILTER(path, path = _srcid)) > 0, FALSE), FALSE),
+        _path2, IF(ISOMITTED(path), MAKEARRAY(1, 1, LAMBDA(r, c, _srcid)), VSTACK(path, _srcid)),
+        _res, IF(OR(_stop, _dupid), _srctag, fxSrcBus(_srcid, connect, _nxtlvl, _path2)),
+        _resnxt, IF(
+            AND(_nxtlvl > 20, NOT(_srctype = "Bus")),
+            TEXTJOIN(" | ", TRUE, "MAXERROR", _srctag),
+            _res
+        ),
+        _resnxt2, IF(_dupid, TEXTJOIN(" | ", TRUE, "LOOPERROR", _srctag), _resnxt),
+        _resnxt2
+    )
+);
+
+/* ========================================================= */
+
+// Loop recursively through :connect to find the next source bus.
+// Maintain a list of all the connected equipment and mark all disconnected circuit with marker XXX.
+// If there is no source bus, then add an end marker XXX.
+// eqid: equipment GUID from column JOIN2ID
+// connect: table VW_BUS_CONN
+fxSrcBusPath=LAMBDA(eqid /*txt*/, connect /*array*/, [path], [lvl], [pathid],
+    LET(
+        _src, fxGetSrcEq(eqid,connect), // find the source equipment
+        // parse the result into variables
+        _srcid, INDEX(_src, 1, 1),
+        _srctag, INDEX(_src, 1, 2),
+        _srctype, INDEX(_src, 1, 3),
+        _srccnn, INDEX(_src, 1, 5),
+        _nxtlvl, IF(ISOMITTED(lvl), 1, lvl + 1),
+        // stop if source bus found
+        _stop, IF(OR(_nxtlvl > 20, _srcid = "", _srctype = "Bus"), TRUE, FALSE),
+        // check for duplicate in path, potential loop
+        _dupid, IF(_nxtlvl > 1, IFERROR(ROWS(FILTER(pathid, pathid = _srcid)) > 0, FALSE), FALSE),
+        // track the source path
+        _nxtpathid, IF(ISOMITTED(path), MAKEARRAY(1, 1, LAMBDA(r, c, _srcid)), VSTACK(pathid, _srcid)),
+        _nxtpath, IF(ISOMITTED(path), MAKEARRAY(1, 1, LAMBDA(r, c, _srctag)), HSTACK(path, _srctag)),
+        // flag if circuit is disconnected
+        _nxtpath2, IF(OR(_srccnn = "Disconnected", _srcid = ""), HSTACK(_nxtpath, "XXX"), _nxtpath),
+        // flag if maximum recursive call made without result
+        _nxtpath3, IF(
+            AND(_nxtlvl > 20, NOT(_srctype = "Bus")),
+            HSTACK(_nxtpath, "XXX", "MAXERROR"),
+            _nxtpath2
+        ),
+        // flag if source looping found
+        _nxtpath4, IF(_dupid, HSTACK(_nxtpath, "XXX", "LOOPERROR"), _nxtpath3),
+        _res, IF(
+            _stop,
+            CONCAT("|", TEXTJOIN("|", TRUE, _nxtpath4), "|"),
+            fxSrcBusPath(_srcid, connect, _nxtpath4, _nxtlvl, _nxtpathid)
+        ),
+        _res
+    )
+);
+
+/* ========================================================= */
+
+// Count the number of parallel source circuits using table :buses.
+// eqid: bus GUID id
+// buses: VW_BUSES_INC
+// cktmode: Connected, Disconnected
+fxSourceCktCount=LAMBDA(eqid /*txt*/, buses /*array*/, [cktmode] /*txt*/,
+    LET(
+        _colbusid, CHOOSECOLS(buses, 1),
+        _colckttype, CHOOSECOLS(buses, 4),
+        _colcktmode, CHOOSECOLS(buses, 8),
+        _allckt, IFERROR(ROWS(FILTER(buses, (_colbusid = eqid)*(NOT(_colckttype = 2)))), 0),
+        _someckt, IFERROR(ROWS(FILTER(buses, (_colbusid = eqid)*(NOT(_colckttype = 2))*(_colcktmode = cktmode))), 0),
+        _res, IF(ISOMITTED(cktmode), _allckt, _someckt),
+        _res
+    )
+);
+
+/* ========================================================= */
+
+// Return a path of all the parent buses
+// bustag: bus tag
+// buses: a list of all bus and their sources :sources
+// sources: a list of source buses for :buses
+fxBusRollup=LAMBDA(bustag /*txt*/, buses /*list*/, sources /*list*/, [lvl], [path],
+    LET(
+        _src, FILTER(sources, buses = bustag, ""), // find the source bus
+        _nosrc, _src = "", // top bus level found
+        _nxtlvl, IF(ISOMITTED(lvl), 1, lvl + 1),
+        // check for duplicate in path, potential loop
+        _dupid, IF(_nxtlvl > 1, IFERROR(ROWS(FILTER(path, path = _src)) > 0, FALSE), FALSE),
+        // stop condition for recursive call
+        _stop, IF(OR(_nxtlvl > 20, _nosrc, _dupid), TRUE, FALSE),
+        // track the source path
+        _nxtpath, IF(ISOMITTED(path), MAKEARRAY(1, 1, LAMBDA(r, c, _src)), VSTACK(path, _src)),
+        // flag if duplicate found in path
+        _nxtpath2, IF(_dupid, VSTACK(_nxtpath, "LOOPERROR"), _nxtpath),
+        // flag if max number of recursive call reached
+        _nxtpath3, IF(_nxtlvl > 20, VSTACK(_nxtpath2, "MAXERROR"), _nxtpath2),
+        _res, TEXTJOIN("|", TRUE, _nxtpath3),
+        _nxtres, IF(
+            _stop,
+            IF(_res = "", _res, CONCAT("|", _res, "|")),
+            fxBusRollup(_src, buses, sources, _nxtlvl, _nxtpath3) // recursive call
+        ),
+        _nxtres
+    )
+);
+
+/* ========================================================= */
+
+// Sum :arrval when :tag contains in :path
+// tag: tag
+// arrval: a list of value to be concatenated
+// path: a list of path to search for the embedded :tag
+fxSumValByPath=LAMBDA(tag /*txt*/, arrval /*list*/, paths /*list*/,
+    LET(
+        _stag, CONCAT("|", tag, "|"),
+        _total, SUM(FILTER(arrval,ISNUMBER(SEARCH(_stag,paths)),{0})),
+        _total  
+    )
+);
+
+/* ========================================================= */
+
+// Concatenate :arrval when :tag contains in :path
+// tag: tag
+// arrval: a list of value to be concatenated
+// path: a list of path to search for the embedded :tag
+fxConcatValByPath=LAMBDA(tag /*txt*/, arrval /*list*/, paths /*list*/,
+    LET(
+        _stag, CONCAT("|", tag, "|"),
+        _dbus, FILTER(arrval,ISNUMBER(SEARCH(_stag,paths)),{""}),
+        _res, TEXTJOIN("|", TRUE, _dbus),
+        _resnxt, IF(_res="","",CONCAT("|", _res, "|")),
+        _resnxt
+    )
+);
+
+/* ========================================================= */
+
+fxLoadBus=LAMBDA(eqid, connect, [lvl], [path],
+    LET(
+        _join1id, CHOOSECOLS(connect, 1),
+        _ld, XLOOKUP(
+            eqid,
+            _join1id,
+            CHOOSECOLS(connect, {6, 7, 8, 9, 10}),
+            {"", "", "", "", ""}
+        ),
+        _ldid, INDEX(_ld, 1, 1),
+        _ldtag, INDEX(_ld, 1, 2),
+        _ldtype, INDEX(_ld, 1, 3),
+        _nxtlvl, IF(ISOMITTED(lvl), 1, lvl + 1),
+        _stop, IF(OR(_nxtlvl > 20, _ldid = "", _ldtype = "Bus"), TRUE, FALSE),
+        _dupid, IF(_nxtlvl > 1, IFERROR(ROWS(FILTER(path, path = _ldid)) > 0, FALSE), FALSE),
+        _path2, IF(ISOMITTED(path), MAKEARRAY(1, 1, LAMBDA(r, c, _ldid)), VSTACK(path, _ldid)),
+        _res, IF(OR(_stop, _dupid), _ldtag, fxLoadBus(_ldid, connect, _nxtlvl, _path2)),
+        _resnxt, IF(
+            AND(_nxtlvl > 20, NOT(_ldtype = "Bus")),
+            TEXTJOIN(" | ", TRUE, "MAXERROR", _ldtag),
+            _res
+        ),
+        _resnxt2, IF(_dupid, TEXTJOIN(" | ", TRUE, "LOOPERROR", _ldtag), _resnxt),
+        _resnxt2
+    )
+)
