@@ -388,7 +388,10 @@ fxConcatValByPath=LAMBDA(tag /*txt*/, arrval /*list*/, paths /*list*/,
 
 /* ========================================================= */
 
-fxLoadBus=LAMBDA(eqid, connect, [lvl], [path],
+// Loop recursively through :connect to find the next load bus.
+// eqid: equipment GUID from column JOIN1ID
+// connect: table VW_BUS_CONN
+fxLoadBus=LAMBDA(eqid /*txt*/, connect /*array*/, [lvl], [path],
     LET(
         _join1id, CHOOSECOLS(connect, 1),
         _ld, XLOOKUP(
